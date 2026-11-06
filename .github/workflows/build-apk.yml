@@ -15,6 +15,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Siapkan folder proyek (ekstrak zip kalau ada)
+        run: |
+          if [ -f package.json ]; then
+            APP_DIR="."
+          else
+            ZIP=$(ls *.zip | head -n1)
+            echo "Ekstrak: $ZIP"
+            mkdir -p app
+            unzip -q "$ZIP" -d app
+            APP_DIR=$(dirname "$(find app -maxdepth 3 -name package.json | head -n1)")
+          fi
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "Folder proyek: $APP_DIR"
+          ls -a "$APP_DIR"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -27,25 +42,25 @@ jobs:
           java-version: 21
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: cd "$APP_DIR" && npm install --no-audit --no-fund
 
       - name: Build web
-        run: npm run build
+        run: cd "$APP_DIR" && npm run build
 
       - name: Tambah platform Android
-        run: npx cap add android
+        run: cd "$APP_DIR" && npx cap add android
 
       - name: Sync aset web ke Android
-        run: npx cap sync android
+        run: cd "$APP_DIR" && npx cap sync android
 
-      - name: Build APK (debug, langsung bisa diinstall)
-        working-directory: android
+      - name: Build APK (debug)
         run: |
+          cd "$APP_DIR/android"
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
       - name: Ganti nama APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk DP-JBR-4.apk
+        run: cp "$APP_DIR/android/app/build/outputs/apk/debug/app-debug.apk" DP-JBR-4.apk
 
       - name: Upload APK sebagai artifact
         uses: actions/upload-artifact@v4
@@ -53,7 +68,7 @@ jobs:
           name: DP-JBR-4-apk
           path: DP-JBR-4.apk
 
-      - name: Buat Release (download langsung dari tab Releases)
+      - name: Buat Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}

@@ -42,7 +42,7 @@ jobs:
           java-version: 21
 
       - name: Install dependencies
-        run: cd "$APP_DIR" && npm install --no-audit --no-fund
+        run: cd "$APP_DIR" && npm pkg set devDependencies.esbuild="^0.28.1" && npm install --no-audit --no-fund
 
       - name: Build web
         run: cd "$APP_DIR" && npm run build

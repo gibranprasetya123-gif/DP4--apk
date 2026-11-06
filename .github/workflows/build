@@ -1,0 +1,61 @@
+name: Build APK WebView
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build web
+        run: npm run build
+
+      - name: Tambah platform Android
+        run: npx cap add android
+
+      - name: Sync aset web ke Android
+        run: npx cap sync android
+
+      - name: Build APK (debug, langsung bisa diinstall)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Ganti nama APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk DP-JBR-4.apk
+
+      - name: Upload APK sebagai artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DP-JBR-4-apk
+          path: DP-JBR-4.apk
+
+      - name: Buat Release (download langsung dari tab Releases)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: DP JBR 4 - build ${{ github.run_number }}
+          files: DP-JBR-4.apk

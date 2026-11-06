@@ -11,24 +11,30 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KS_B64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Siapkan folder proyek (ekstrak zip kalau ada)
+      - name: Baca link web app dari APP_URL.txt
         run: |
-          if [ -f package.json ]; then
-            APP_DIR="."
-          else
-            ZIP=$(ls *.zip | head -n1)
-            echo "Ekstrak: $ZIP"
-            mkdir -p app
-            unzip -q "$ZIP" -d app
-            APP_DIR=$(dirname "$(find app -maxdepth 3 -name package.json | head -n1)")
+          if [ ! -f APP_URL.txt ]; then
+            echo "::error::File APP_URL.txt tidak ada di halaman utama repo"
+            exit 1
           fi
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-          echo "Folder proyek: $APP_DIR"
-          ls -a "$APP_DIR"
+          URL=$(head -n1 APP_URL.txt | tr -d ' \r\n\t')
+          case "$URL" in
+            https://*) ;;
+            *) echo "::error::Isi APP_URL.txt harus link berawalan https:// (sekarang: $URL)"; exit 1 ;;
+          esac
+          case "$URL" in
+            *GANTI*) echo "::error::APP_URL.txt masih berisi contoh. Ganti dengan link web app yang sudah dipublish."; exit 1 ;;
+          esac
+          HOST=$(echo "$URL" | sed -E 's#https://([^/:?]+).*#\1#')
+          echo "APP_URL=$URL" >> "$GITHUB_ENV"
+          echo "APP_HOST=$HOST" >> "$GITHUB_ENV"
+          echo "Link web app: $URL"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -41,26 +47,66 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Install dependencies
-        run: cd "$APP_DIR" && npm pkg set devDependencies.esbuild="^0.28.1" && npm install --no-audit --no-fund
-
-      - name: Build web
-        run: cd "$APP_DIR" && npm run build
-
-      - name: Tambah platform Android
-        run: cd "$APP_DIR" && npx cap add android
-
-      - name: Sync aset web ke Android
-        run: cd "$APP_DIR" && npx cap sync android
-
-      - name: Build APK (debug)
+      - name: Buat proyek WebView Android
         run: |
-          cd "$APP_DIR/android"
+          mkdir webview && cd webview
+          npm init -y > /dev/null
+          npm install @capacitor/core@7 @capacitor/android@7 @capacitor/cli@7 --no-audit --no-fund
+          mkdir www
+          cat > www/index.html <<'HTML'
+          <!doctype html>
+          <html lang="id"><head><meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>DP JBR 4</title></head>
+          <body style="margin:0;background:#064e3b;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh">
+          <p>Memuat DP JBR 4...</p></body></html>
+          HTML
+          cat > www/error.html <<'HTML'
+          <!doctype html>
+          <html lang="id"><head><meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>DP JBR 4</title></head>
+          <body style="margin:0;background:#064e3b;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center;padding:24px">
+          <div><h2>Tidak bisa terhubung</h2><p>Periksa koneksi internet, lalu tutup dan buka kembali aplikasi.</p></div></body></html>
+          HTML
+          python3 - <<'PY'
+          import json, os
+          cfg = {
+            "appId": "com.dpjbr4.app",
+            "appName": "DP JBR 4",
+            "webDir": "www",
+            "backgroundColor": "#064e3b",
+            "server": {
+              "url": os.environ["APP_URL"],
+              "cleartext": False,
+              "allowNavigation": [os.environ["APP_HOST"]],
+              "errorPath": "error.html"
+            }
+          }
+          json.dump(cfg, open("capacitor.config.json", "w"), indent=2)
+          PY
+          npx cap add android
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          npx cap sync android
+
+      - name: Pasang kunci tanda tangan tetap (jika Secret ada)
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > ~/.android/debug.keystore
+            echo "Memakai keystore tetap dari Secret DEBUG_KEYSTORE_BASE64"
+          else
+            echo "::warning::Secret DEBUG_KEYSTORE_BASE64 belum diisi. APK memakai kunci acak, jadi tiap update harus uninstall dulu."
+          fi
+
+      - name: Build APK
+        run: |
+          cd webview/android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
       - name: Ganti nama APK
-        run: cp "$APP_DIR/android/app/build/outputs/apk/debug/app-debug.apk" DP-JBR-4.apk
+        run: cp webview/android/app/build/outputs/apk/debug/app-debug.apk DP-JBR-4.apk
 
       - name: Upload APK sebagai artifact
         uses: actions/upload-artifact@v4
